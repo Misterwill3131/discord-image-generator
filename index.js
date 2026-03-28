@@ -2,6 +2,7 @@ const express = require('express');
 const { createCanvas, GlobalFonts } = require('@napi-rs/canvas');
 const cloudinary = require('cloudinary').v2;
 const https = require('https');
+const http = require('http');
 
 const app = express();
 app.use(express.json());
@@ -12,10 +13,14 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// Download a TTF font buffer from URL
-function downloadFont(url) {
+function downloadUrl(urlStr) {
   return new Promise((resolve, reject) => {
-    https.get(url, (res) => {
+    const parsed = new URL(urlStr);
+    const client = parsed.protocol === 'https:' ? https : http;
+    client.get(urlStr, { headers: { 'User-Agent': 'Node.js' } }, (res) => {
+      if (res.statusCode === 301 || res.statusCode === 302) {
+        return downloadUrl(res.headers.location).then(resolve).catch(reject);
+      }
       const chunks = [];
       res.on('data', (chunk) => chunks.push(chunk));
       res.on('end', () => resolve(Buffer.concat(chunks)));
@@ -26,31 +31,32 @@ function downloadFont(url) {
 
 let fontFamily = 'sans-serif';
 let fontLoaded = false;
+let fontPromise = null;
 
-async function ensureFonts() {
-  if (fontLoaded) return;
+async function loadFonts() {
   try {
-    // Download NotoSans Bold TTF from GitHub (reliable CDN)
-    const regularUrl = 'https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf';
-    const boldUrl = 'https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSans/NotoSans-Bold.ttf';
+    // Use jsDelivr CDN for reliable font delivery (no redirect issues)
+    const regularUrl = 'https://cdn.jsdelivr.net/npm/@fontsource/noto-sans@4.5.14/files/noto-sans-latin-400-normal.woff2';
+    const boldUrl = 'https://cdn.jsdelivr.net/npm/@fontsource/noto-sans@4.5.14/files/noto-sans-latin-700-normal.woff2';
+    
     const [regularBuf, boldBuf] = await Promise.all([
-      downloadFont(regularUrl),
-      downloadFont(boldUrl)
+      downloadUrl(regularUrl),
+      downloadUrl(boldUrl)
     ]);
+    
     GlobalFonts.registerFromData(regularBuf, 'NotoSans');
     GlobalFonts.registerFromData(boldBuf, 'NotoSans');
     fontFamily = 'NotoSans';
     fontLoaded = true;
-    console.log('Fonts loaded successfully');
+    console.log('NotoSans loaded, bytes:', regularBuf.length, boldBuf.length);
   } catch (e) {
-    console.error('Font load failed, using fallback:', e.message);
-    fontFamily = 'sans-serif';
-    fontLoaded = true;
+    console.error('Font load failed:', e.message);
+    fontLoaded = true; // mark done even on failure
   }
 }
 
-// Start loading fonts immediately
-ensureFonts();
+// Start loading fonts immediately on startup
+fontPromise = loadFonts();
 
 function wrapText(ctx, text, maxWidth) {
   const words = text.split(' ');
@@ -103,7 +109,9 @@ app.get('/health', (req, res) => {
 
 app.post('/generate-image', async (req, res) => {
   try {
-    await ensureFonts();
+    // Wait for font loading to complete
+    if (fontPromise) await fontPromise;
+    
     const { message = '', username = 'User', channel = 'general', timestamp = null } = req.body;
 
     const WIDTH = 700;
@@ -114,7 +122,7 @@ app.post('/generate-image', async (req, res) => {
 
     const tempCanvas = createCanvas(WIDTH, 200);
     const tempCtx = tempCanvas.getContext('2d');
-    tempCtx.font = `bold 15px ${FF}`;
+    tempCtx.font = `bold 15px "${FF}"`;
     const msgMaxWidth = WIDTH - PADDING * 2 - AVATAR_SIZE - 28;
     const msgLines = wrapText(tempCtx, message, msgMaxWidth);
 
@@ -140,7 +148,7 @@ app.post('/generate-image', async (req, res) => {
     ctx.fill();
 
     // Avatar letter
-    ctx.font = `bold 18px ${FF}`;
+    ctx.font = `bold 18px "${FF}"`;
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -152,7 +160,7 @@ app.post('/generate-image', async (req, res) => {
     let curY = VERTICAL_PAD;
 
     // Username
-    ctx.font = `bold 15px ${FF}`;
+    ctx.font = `bold 15px "${FF}"`;
     ctx.fillStyle = '#ffffff';
     ctx.fillText(username, contentX, curY + 15);
     const usernameWidth = ctx.measureText(username).width;
@@ -177,7 +185,7 @@ app.post('/generate-image', async (req, res) => {
     ctx.closePath();
     ctx.fill();
 
-    ctx.font = `bold 9px ${FF}`;
+    ctx.font = `bold 9px "${FF}"`;
     ctx.fillStyle = '#ffffff';
     ctx.textBaseline = 'middle';
     ctx.fillText('APP', badgeX + 5, badgeY + badgeH / 2);
@@ -186,13 +194,13 @@ app.post('/generate-image', async (req, res) => {
     // Timestamp
     const tsText = formatTimestamp(timestamp);
     const timestampX = badgeX + badgeW + 8;
-    ctx.font = `12px ${FF}`;
+    ctx.font = `12px "${FF}"`;
     ctx.fillStyle = '#949ba4';
     ctx.fillText(tsText, timestampX, curY + 15);
 
     // Message lines
     curY += HEADER_HEIGHT + 4;
-    ctx.font = `bold 15px ${FF}`;
+    ctx.font = `bold 15px "${FF}"`;
     ctx.fillStyle = '#dbdee1';
     for (const line of msgLines) {
       ctx.fillText(line, contentX, curY + 15);
@@ -211,7 +219,7 @@ app.post('/generate-image', async (req, res) => {
       uploadStream.end(buffer);
     });
 
-    res.json({ image_url: uploadResult.secure_url, success: true });
+    res.json({ image_url: uploadResult.secure_url, success: true, fontFamily: FF });
   } catch (err) {
     console.error('Error generating image:', err);
     res.status(500).json({ error: err.message });
