@@ -44,50 +44,40 @@ let fontPromise = null;
 
 async function loadFonts() {
   try {
-    // Download Noto Sans Regular TTF from jsDelivr
     const regularUrl = 'https://cdn.jsdelivr.net/npm/@fontsource/noto-sans/files/noto-sans-latin-400-normal.woff2';
     const boldUrl = 'https://cdn.jsdelivr.net/npm/@fontsource/noto-sans/files/noto-sans-latin-700-normal.woff2';
-    
-    console.log('Downloading fonts...');
     const [regularBuf, boldBuf] = await Promise.all([
       downloadUrl(regularUrl),
       downloadUrl(boldUrl)
     ]);
-    
-    console.log('Font sizes:', regularBuf.length, boldBuf.length);
-    
-    // Write fonts to temp directory
     const tmpDir = os.tmpdir();
     const regularPath = path.join(tmpDir, 'NotoSans-Regular.woff2');
     const boldPath = path.join(tmpDir, 'NotoSans-Bold.woff2');
-    
     fs.writeFileSync(regularPath, regularBuf);
     fs.writeFileSync(boldPath, boldBuf);
-    console.log('Fonts written to:', regularPath, boldPath);
-    
-    // Use registerFromPath (the correct API for this version of @napi-rs/canvas)
-    const regResult1 = GlobalFonts.registerFromPath(regularPath, 'NotoSans');
-    const regResult2 = GlobalFonts.registerFromPath(boldPath, 'NotoSans');
-    console.log('registerFromPath results:', regResult1, regResult2);
-    
-    const families = GlobalFonts.getFamilies ? GlobalFonts.getFamilies() : [];
-    console.log('Available families:', JSON.stringify(families));
-    
-    if (regResult1 || regResult2) {
-      fontFamily = 'NotoSans';
-      console.log('Font registered successfully as NotoSans');
-    } else {
-      fontError = 'registerFromPath returned false for both fonts';
-    }
+    const r1 = GlobalFonts.registerFromPath(regularPath, 'NotoSans');
+    const r2 = GlobalFonts.registerFromPath(boldPath, 'NotoSans');
+    if (r1 || r2) fontFamily = 'NotoSans';
     fontLoaded = true;
+    console.log('Fonts loaded:', fontFamily);
   } catch (e) {
     fontError = e.message;
-    console.error('Font load failed:', e.message);
     fontLoaded = true;
+    console.error('Font error:', e.message);
   }
 }
 
 fontPromise = loadFonts();
+
+// Helper to get a field from body using multiple possible key names
+function getField(body, ...keys) {
+  for (const key of keys) {
+    if (body[key] !== undefined && body[key] !== null && body[key] !== '') {
+      return String(body[key]);
+    }
+  }
+  return null;
+}
 
 function wrapText(ctx, text, maxWidth) {
   const words = text.split(' ');
@@ -110,6 +100,7 @@ function formatTimestamp(ts) {
   if (!ts) return 'Today';
   try {
     const d = new Date(ts);
+    if (isNaN(d.getTime())) return 'Today';
     const now = new Date();
     const diffMs = now - d;
     const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
@@ -136,14 +127,43 @@ function getAvatarColor(username) {
 
 app.get('/health', (req, res) => {
   const families = GlobalFonts.getFamilies ? GlobalFonts.getFamilies() : [];
-  res.json({ status: 'ok', fontLoaded, fontFamily, fontError, availableFonts: families });
+  res.json({ status: 'ok', fontLoaded, fontFamily, fontError });
+});
+
+// Debug endpoint to see what we receive
+app.post('/debug', (req, res) => {
+  res.json({ body: req.body, keys: Object.keys(req.body) });
 });
 
 app.post('/generate-image', async (req, res) => {
   try {
     if (fontPromise) await fontPromise;
+
+    console.log('Request body keys:', Object.keys(req.body));
+    console.log('Request body:', JSON.stringify(req.body));
+
+    // Accept all possible key name variations from Zapier
+    const message = getField(req.body,
+      'message', 'me', 'msg', 'content', 'text', 'body',
+      'Message', 'MESSAGE', 'CONTENT'
+    ) || '';
     
-    const { message = '', username = 'User', channel = 'general', timestamp = null } = req.body;
+    const username = getField(req.body,
+      'username', 'us', 'user', 'author', 'name', 'u',
+      'Username', 'USERNAME', 'Author', 'AUTHOR'
+    ) || 'User';
+    
+    const channel = getField(req.body,
+      'channel', 'ch', 'chan', 'c',
+      'Channel', 'CHANNEL'
+    ) || 'general';
+    
+    const timestamp = getField(req.body,
+      'timestamp', 'ti', 'time', 'ts', 't', 'date',
+      'Timestamp', 'TIMESTAMP'
+    ) || null;
+
+    console.log('Parsed - message:', message, 'username:', username, 'channel:', channel);
 
     const WIDTH = 700;
     const PADDING = 16;
@@ -155,7 +175,7 @@ app.post('/generate-image', async (req, res) => {
     const tempCtx = tempCanvas.getContext('2d');
     tempCtx.font = `bold 15px "${FF}"`;
     const msgMaxWidth = WIDTH - PADDING * 2 - AVATAR_SIZE - 28;
-    const msgLines = wrapText(tempCtx, message, msgMaxWidth);
+    const msgLines = message ? wrapText(tempCtx, message, msgMaxWidth) : ['(no message)'];
 
     const HEADER_HEIGHT = 22;
     const LINE_HEIGHT = 22;
@@ -243,9 +263,9 @@ app.post('/generate-image', async (req, res) => {
       uploadStream.end(buffer);
     });
 
-    res.json({ image_url: uploadResult.secure_url, success: true, fontFamily: FF });
+    res.json({ image_url: uploadResult.secure_url, success: true, fontFamily: FF, receivedKeys: Object.keys(req.body) });
   } catch (err) {
-    console.error('Error generating image:', err);
+    console.error('Error:', err);
     res.status(500).json({ error: err.message });
   }
 });
