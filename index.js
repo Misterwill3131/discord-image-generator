@@ -1,6 +1,7 @@
 const express = require('express');
-const { createCanvas } = require('@napi-rs/canvas');
+const { createCanvas, GlobalFonts } = require('@napi-rs/canvas');
 const cloudinary = require('cloudinary').v2;
+const https = require('https');
 
 const app = express();
 app.use(express.json());
@@ -10,6 +11,46 @@ cloudinary.config({
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
+
+// Download a TTF font buffer from URL
+function downloadFont(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+      res.on('error', reject);
+    }).on('error', reject);
+  });
+}
+
+let fontFamily = 'sans-serif';
+let fontLoaded = false;
+
+async function ensureFonts() {
+  if (fontLoaded) return;
+  try {
+    // Download NotoSans Bold TTF from GitHub (reliable CDN)
+    const regularUrl = 'https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf';
+    const boldUrl = 'https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSans/NotoSans-Bold.ttf';
+    const [regularBuf, boldBuf] = await Promise.all([
+      downloadFont(regularUrl),
+      downloadFont(boldUrl)
+    ]);
+    GlobalFonts.registerFromData(regularBuf, 'NotoSans');
+    GlobalFonts.registerFromData(boldBuf, 'NotoSans');
+    fontFamily = 'NotoSans';
+    fontLoaded = true;
+    console.log('Fonts loaded successfully');
+  } catch (e) {
+    console.error('Font load failed, using fallback:', e.message);
+    fontFamily = 'sans-serif';
+    fontLoaded = true;
+  }
+}
+
+// Start loading fonts immediately
+ensureFonts();
 
 function wrapText(ctx, text, maxWidth) {
   const words = text.split(' ');
@@ -57,22 +98,23 @@ function getAvatarColor(username) {
 }
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok' });
+  res.json({ status: 'ok', fontLoaded, fontFamily });
 });
 
 app.post('/generate-image', async (req, res) => {
   try {
+    await ensureFonts();
     const { message = '', username = 'User', channel = 'general', timestamp = null } = req.body;
 
     const WIDTH = 700;
     const PADDING = 16;
     const AVATAR_SIZE = 40;
     const AVATAR_X = 16;
-    const FONT_FAMILY = 'sans-serif';
+    const FF = fontFamily;
 
     const tempCanvas = createCanvas(WIDTH, 200);
     const tempCtx = tempCanvas.getContext('2d');
-    tempCtx.font = 'bold 15px ' + FONT_FAMILY;
+    tempCtx.font = `bold 15px ${FF}`;
     const msgMaxWidth = WIDTH - PADDING * 2 - AVATAR_SIZE - 28;
     const msgLines = wrapText(tempCtx, message, msgMaxWidth);
 
@@ -85,18 +127,20 @@ app.post('/generate-image', async (req, res) => {
     const canvas = createCanvas(WIDTH, HEIGHT);
     const ctx = canvas.getContext('2d');
 
+    // Background
     ctx.fillStyle = '#313338';
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
+    // Avatar circle
     const avatarCenterX = AVATAR_X + AVATAR_SIZE / 2;
     const avatarCenterY = VERTICAL_PAD + AVATAR_SIZE / 2;
-
     ctx.beginPath();
     ctx.arc(avatarCenterX, avatarCenterY, AVATAR_SIZE / 2, 0, Math.PI * 2);
     ctx.fillStyle = getAvatarColor(username);
     ctx.fill();
 
-    ctx.font = 'bold 18px ' + FONT_FAMILY;
+    // Avatar letter
+    ctx.font = `bold 18px ${FF}`;
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -107,11 +151,13 @@ app.post('/generate-image', async (req, res) => {
     const contentX = AVATAR_X + AVATAR_SIZE + 12;
     let curY = VERTICAL_PAD;
 
-    ctx.font = 'bold 15px ' + FONT_FAMILY;
+    // Username
+    ctx.font = `bold 15px ${FF}`;
     ctx.fillStyle = '#ffffff';
     ctx.fillText(username, contentX, curY + 15);
     const usernameWidth = ctx.measureText(username).width;
 
+    // APP badge
     const badgeX = contentX + usernameWidth + 8;
     const badgeY = curY + 3;
     const badgeW = 34;
@@ -131,20 +177,22 @@ app.post('/generate-image', async (req, res) => {
     ctx.closePath();
     ctx.fill();
 
-    ctx.font = 'bold 9px ' + FONT_FAMILY;
+    ctx.font = `bold 9px ${FF}`;
     ctx.fillStyle = '#ffffff';
     ctx.textBaseline = 'middle';
     ctx.fillText('APP', badgeX + 5, badgeY + badgeH / 2);
     ctx.textBaseline = 'alphabetic';
 
+    // Timestamp
     const tsText = formatTimestamp(timestamp);
     const timestampX = badgeX + badgeW + 8;
-    ctx.font = '12px ' + FONT_FAMILY;
+    ctx.font = `12px ${FF}`;
     ctx.fillStyle = '#949ba4';
     ctx.fillText(tsText, timestampX, curY + 15);
 
+    // Message lines
     curY += HEADER_HEIGHT + 4;
-    ctx.font = 'bold 15px ' + FONT_FAMILY;
+    ctx.font = `bold 15px ${FF}`;
     ctx.fillStyle = '#dbdee1';
     for (const line of msgLines) {
       ctx.fillText(line, contentX, curY + 15);
