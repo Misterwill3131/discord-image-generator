@@ -41,46 +41,45 @@ let fontFamily = 'sans-serif';
 let fontLoaded = false;
 let fontError = null;
 let fontPromise = null;
-let gfKeys = [];
 
 async function loadFonts() {
   try {
-    gfKeys = Object.keys(GlobalFonts);
-    console.log('GlobalFonts keys:', gfKeys);
+    // Download Noto Sans Regular TTF from jsDelivr
+    const regularUrl = 'https://cdn.jsdelivr.net/npm/@fontsource/noto-sans/files/noto-sans-latin-400-normal.woff2';
+    const boldUrl = 'https://cdn.jsdelivr.net/npm/@fontsource/noto-sans/files/noto-sans-latin-700-normal.woff2';
     
-    // Use jsdelivr to get a TTF font file
-    // Inter font - clean, available as TTF
-    const regularUrl = 'https://cdn.jsdelivr.net/npm/inter-ui@3.19.3/Inter%20(web)/Inter-Regular.woff2';
+    console.log('Downloading fonts...');
+    const [regularBuf, boldBuf] = await Promise.all([
+      downloadUrl(regularUrl),
+      downloadUrl(boldUrl)
+    ]);
     
-    console.log('Downloading font...');
-    const fontBuf = await downloadUrl(regularUrl);
-    console.log('Font downloaded, size:', fontBuf.length, 'bytes');
+    console.log('Font sizes:', regularBuf.length, boldBuf.length);
     
-    // Write to temp file
-    const tmpPath = path.join(os.tmpdir(), 'font-regular.woff2');
-    fs.writeFileSync(tmpPath, fontBuf);
-    console.log('Font written to:', tmpPath);
+    // Write fonts to temp directory
+    const tmpDir = os.tmpdir();
+    const regularPath = path.join(tmpDir, 'NotoSans-Regular.woff2');
+    const boldPath = path.join(tmpDir, 'NotoSans-Bold.woff2');
     
-    // Try all available registration methods
-    if (typeof GlobalFonts.registerFromData === 'function') {
-      const ok = GlobalFonts.registerFromData(fontBuf, 'CustomFont');
-      console.log('registerFromData result:', ok);
-      if (ok) { fontFamily = 'CustomFont'; }
-    } else if (typeof GlobalFonts.register === 'function') {
-      const ok = GlobalFonts.register(tmpPath, 'CustomFont');
-      console.log('register result:', ok);
-      if (ok) { fontFamily = 'CustomFont'; }
-    } else if (typeof GlobalFonts.loadFontsFromDir === 'function') {
-      const tmpDir = os.tmpdir();
-      const count = GlobalFonts.loadFontsFromDir(tmpDir);
-      console.log('loadFontsFromDir count:', count);
+    fs.writeFileSync(regularPath, regularBuf);
+    fs.writeFileSync(boldPath, boldBuf);
+    console.log('Fonts written to:', regularPath, boldPath);
+    
+    // Use registerFromPath (the correct API for this version of @napi-rs/canvas)
+    const regResult1 = GlobalFonts.registerFromPath(regularPath, 'NotoSans');
+    const regResult2 = GlobalFonts.registerFromPath(boldPath, 'NotoSans');
+    console.log('registerFromPath results:', regResult1, regResult2);
+    
+    const families = GlobalFonts.getFamilies ? GlobalFonts.getFamilies() : [];
+    console.log('Available families:', JSON.stringify(families));
+    
+    if (regResult1 || regResult2) {
+      fontFamily = 'NotoSans';
+      console.log('Font registered successfully as NotoSans');
     } else {
-      console.log('No known font registration method found');
+      fontError = 'registerFromPath returned false for both fonts';
     }
-    
     fontLoaded = true;
-    console.log('fontFamily set to:', fontFamily);
-    console.log('Available font families:', GlobalFonts.families ? GlobalFonts.families.map(f => f.family) : 'N/A');
   } catch (e) {
     fontError = e.message;
     console.error('Font load failed:', e.message);
@@ -136,10 +135,8 @@ function getAvatarColor(username) {
 }
 
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', fontLoaded, fontFamily, fontError, gfKeys,
-    availableFonts: GlobalFonts.families ? GlobalFonts.families.map(f => f.family) : []
-  });
+  const families = GlobalFonts.getFamilies ? GlobalFonts.getFamilies() : [];
+  res.json({ status: 'ok', fontLoaded, fontFamily, fontError, availableFonts: families });
 });
 
 app.post('/generate-image', async (req, res) => {
