@@ -28,106 +28,149 @@ function wrapText(ctx, text, maxWidth) {
   return lines;
 }
 
+function formatTimestamp(ts) {
+  if (!ts) return 'Today';
+  try {
+    const d = new Date(ts);
+    const now = new Date();
+    const diffMs = now - d;
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays === 0) {
+      return 'Today at ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+    } else if (diffDays === 1) {
+      return 'Yesterday at ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+    } else {
+      return d.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' });
+    }
+  } catch (e) {
+    return 'Today';
+  }
+}
+
+function getAvatarColor(username) {
+  const colors = ['#5865F2','#57F287','#FEE75C','#EB459E','#ED4245','#9B59B6','#E67E22','#1ABC9C'];
+  let hash = 0;
+  for (let i = 0; i < username.length; i++) {
+    hash = username.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return colors[Math.abs(hash) % colors.length];
+}
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
 app.post('/generate-image', async (req, res) => {
   try {
-    const {
-      message = 'SPY 1.23-2.13',
-      username = 'trader',
-      channel = 'trading-signals',
-      timestamp = 'Today at 12:00',
-    } = req.body;
+    const { message = '', username = 'User', channel = 'general', timestamp = null } = req.body;
 
-    const width = 620;
-    const lineHeight = 24;
-    const paddingTop = 20;
-    const paddingLeft = 80;
-    const maxTextWidth = width - paddingLeft - 20;
+    const WIDTH = 700;
+    const PADDING = 16;
+    const AVATAR_SIZE = 40;
+    const AVATAR_X = 16;
+    const FONT_FAMILY = 'sans-serif';
 
-    const tempCanvas = createCanvas(width, 200);
+    const tempCanvas = createCanvas(WIDTH, 200);
     const tempCtx = tempCanvas.getContext('2d');
-    tempCtx.font = '16px sans-serif';
-    const messageLines = wrapText(tempCtx, message, maxTextWidth);
+    tempCtx.font = 'bold 15px ' + FONT_FAMILY;
+    const msgMaxWidth = WIDTH - PADDING * 2 - AVATAR_SIZE - 28;
+    const msgLines = wrapText(tempCtx, message, msgMaxWidth);
 
-    const headerHeight = 50;
-    const footerHeight = 30;
-    const messageHeight = messageLines.length * lineHeight + 10;
-    const height = paddingTop + headerHeight + messageHeight + footerHeight + 10;
+    const HEADER_HEIGHT = 22;
+    const LINE_HEIGHT = 22;
+    const MSG_HEIGHT = msgLines.length * LINE_HEIGHT;
+    const VERTICAL_PAD = 12;
+    const HEIGHT = VERTICAL_PAD + HEADER_HEIGHT + MSG_HEIGHT + VERTICAL_PAD + 4;
 
-    const canvas = createCanvas(width, height);
+    const canvas = createCanvas(WIDTH, HEIGHT);
     const ctx = canvas.getContext('2d');
 
     ctx.fillStyle = '#313338';
-    ctx.fillRect(0, 0, width, height);
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-    ctx.fillStyle = '#5865F2';
-    ctx.fillRect(0, 0, 4, height);
+    const avatarCenterX = AVATAR_X + AVATAR_SIZE / 2;
+    const avatarCenterY = VERTICAL_PAD + AVATAR_SIZE / 2;
 
-    const avatarX = 28;
-    const avatarY = paddingTop + 12;
-    ctx.fillStyle = '#5865F2';
     ctx.beginPath();
-    ctx.arc(avatarX, avatarY, 18, 0, Math.PI * 2);
+    ctx.arc(avatarCenterX, avatarCenterY, AVATAR_SIZE / 2, 0, Math.PI * 2);
+    ctx.fillStyle = getAvatarColor(username);
     ctx.fill();
 
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = 'bold 16px sans-serif';
+    ctx.font = 'bold 18px ' + FONT_FAMILY;
+    ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'center';
-    ctx.fillText(username[0].toUpperCase(), avatarX, avatarY + 6);
-
+    ctx.textBaseline = 'middle';
+    ctx.fillText(username.charAt(0).toUpperCase(), avatarCenterX, avatarCenterY);
     ctx.textAlign = 'left';
-    ctx.fillStyle = '#00AFF4';
-    ctx.font = 'bold 15px sans-serif';
-    ctx.fillText(username, paddingLeft, paddingTop + 16);
+    ctx.textBaseline = 'alphabetic';
 
+    const contentX = AVATAR_X + AVATAR_SIZE + 12;
+    let curY = VERTICAL_PAD;
+
+    ctx.font = 'bold 15px ' + FONT_FAMILY;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(username, contentX, curY + 15);
     const usernameWidth = ctx.measureText(username).width;
-    ctx.fillStyle = '#72767d';
-    ctx.font = '11px sans-serif';
-    ctx.fillText(timestamp, paddingLeft + usernameWidth + 8, paddingTop + 15);
 
-    ctx.fillStyle = '#72767d';
-    ctx.font = '11px sans-serif';
-    ctx.textAlign = 'right';
-    ctx.fillText('# ' + channel, width - 12, paddingTop + 15);
+    const badgeX = contentX + usernameWidth + 8;
+    const badgeY = curY + 3;
+    const badgeW = 34;
+    const badgeH = 14;
+    const badgeRadius = 3;
+    ctx.fillStyle = '#5865F2';
+    ctx.beginPath();
+    ctx.moveTo(badgeX + badgeRadius, badgeY);
+    ctx.lineTo(badgeX + badgeW - badgeRadius, badgeY);
+    ctx.quadraticCurveTo(badgeX + badgeW, badgeY, badgeX + badgeW, badgeY + badgeRadius);
+    ctx.lineTo(badgeX + badgeW, badgeY + badgeH - badgeRadius);
+    ctx.quadraticCurveTo(badgeX + badgeW, badgeY + badgeH, badgeX + badgeW - badgeRadius, badgeY + badgeH);
+    ctx.lineTo(badgeX + badgeRadius, badgeY + badgeH);
+    ctx.quadraticCurveTo(badgeX, badgeY + badgeH, badgeX, badgeY + badgeH - badgeRadius);
+    ctx.lineTo(badgeX, badgeY + badgeRadius);
+    ctx.quadraticCurveTo(badgeX, badgeY, badgeX + badgeRadius, badgeY);
+    ctx.closePath();
+    ctx.fill();
 
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#DBDEE1';
-    ctx.font = 'bold 18px sans-serif';
-    let textY = paddingTop + headerHeight;
-    for (const line of messageLines) {
-      ctx.fillText(line, paddingLeft, textY);
-      textY += lineHeight;
+    ctx.font = 'bold 9px ' + FONT_FAMILY;
+    ctx.fillStyle = '#ffffff';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('APP', badgeX + 5, badgeY + badgeH / 2);
+    ctx.textBaseline = 'alphabetic';
+
+    const tsText = formatTimestamp(timestamp);
+    const timestampX = badgeX + badgeW + 8;
+    ctx.font = '12px ' + FONT_FAMILY;
+    ctx.fillStyle = '#949ba4';
+    ctx.fillText(tsText, timestampX, curY + 15);
+
+    curY += HEADER_HEIGHT + 4;
+    ctx.font = 'bold 15px ' + FONT_FAMILY;
+    ctx.fillStyle = '#dbdee1';
+    for (const line of msgLines) {
+      ctx.fillText(line, contentX, curY + 15);
+      curY += LINE_HEIGHT;
     }
 
-    ctx.strokeStyle = '#3F4147';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(12, height - footerHeight);
-    ctx.lineTo(width - 12, height - footerHeight);
-    ctx.stroke();
-
-    ctx.fillStyle = '#5865F2';
-    ctx.font = 'bold 12px sans-serif';
-    ctx.textAlign = 'right';
-    ctx.fillText('Discord', width - 12, height - 10);
-
     const buffer = await canvas.encode('png');
-
-    const result = await new Promise((resolve, reject) => {
-      cloudinary.uploader.upload_stream(
-        { folder: 'discord-trades', resource_type: 'image', format: 'png' },
-        (error, result) => { if (error) reject(error); else resolve(result); }
-      ).end(buffer);
+    const uploadResult = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        { folder: 'discord-trades', resource_type: 'image' },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      );
+      uploadStream.end(buffer);
     });
 
-    res.json({ success: true, image_url: result.secure_url });
-
+    res.json({ image_url: uploadResult.secure_url, success: true });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, error: err.message });
+    console.error('Error generating image:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-app.get('/health', (req, res) => res.json({ status: 'ok' }));
-
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log('Server running on port ' + PORT));
+app.listen(PORT, () => {
+  console.log('Discord image generator running on port ' + PORT);
+});
