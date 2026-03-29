@@ -1,11 +1,10 @@
 const express = require('express');
-const { createCanvas, GlobalFonts } = require('@napi-rs/canvas');
+const { createCanvas, GlobalFonts , loadImage} = require('@napi-rs/canvas');
 const cloudinary = require('cloudinary').v2;
 const https = require('https');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-
 const app = express();
 app.use(express.json());
 
